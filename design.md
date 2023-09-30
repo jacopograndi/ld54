@@ -44,9 +44,7 @@ Starting resources:
 20 rocket,
 
 Ship buildings:
-chemical plant
 solar array
-fusion generator (off)
 hydroponic farm
 
 Buildings:
@@ -61,7 +59,7 @@ Buildings:
 +3 food/turn, (1M) decays in 3 turns
 
 - hydroponic farm:
-+2 food/turn, 2 power/turn, (3M)
++2 food/turn, -2 power/turn, (3M)
 
 - planet farm: (planet only)
 +20 food/5 turns, (15M)
