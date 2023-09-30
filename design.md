@@ -49,6 +49,12 @@ hydroponic farm
 
 Buildings:
 
+- solar array:
++3 power/turn on surface, +5 power/turn in space (2M)
+
+- hydroponic farm:
++2 food/turn, -2 power/turn, (3M)
+
 - atmosphere harvester: (planet only) 
 +8 fusion/3 turn, -4 power/turn (20M)
 
@@ -58,20 +64,14 @@ Buildings:
 - bacteria farm:
 +3 food/turn, (1M) decays in 3 turns
 
-- hydroponic farm:
-+2 food/turn, -2 power/turn, (3M)
-
 - planet farm: (planet only)
 +20 food/5 turns, (15M)
 
 - asteroid mine: (asteroid only)
-+5 material/turn, -2 power/turn (4M)
++5 material/2 turn, -2 rocket/turn (4M)
 
 - quarry:
 +60 materials/3 turns, -5 power/turn (18M), decays in 6 turns
-
-- solar array:
-+3 power/turn on surface, +5 power/turn in space (2M)
 
 - fusion generator:
 +10 power/turn, -1 fusion/turn (10M)
