@@ -81,7 +81,7 @@ fn main() -> Result<(), io::Error> {
             &[
                 "push",
                 "out.zip",
-                &("zjikra/".to_string() + &get_crate_name() + ITCH_CHANNEL),
+                &("zjikra/zero-percent".to_string() + ITCH_CHANNEL),
             ],
         )?;
     }

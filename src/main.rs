@@ -1,12 +1,7 @@
 use std::{f32::consts::PI, time::Duration};
 
 use bevy::{
-    app::AppExit,
-    asset::LoadState,
-    audio::VolumeLevel,
-    input::{mouse::MouseButtonInput, ButtonState},
-    prelude::*,
-    utils::HashMap,
+    app::AppExit, asset::LoadState, audio::VolumeLevel, prelude::*, utils::HashMap,
     window::PrimaryWindow,
 };
 
@@ -25,13 +20,17 @@ fn main() {
         .add_systems(Update, check_loading.run_if(in_state(AppState::Loading)))
         .add_systems(OnExit(AppState::Loading), gen_atlas)
         .add_systems(OnExit(AppState::Loading), play_song)
-        .add_systems(OnEnter(AppState::Setup), (setup_scene).chain())
+        .add_systems(
+            OnEnter(AppState::Setup),
+            (setup_scene, setup_ui_topleft).chain(),
+        )
         .add_systems(Update, escape_exit)
         .add_systems(
             Update,
             (
                 turn,
                 ship_orbit,
+                ship_plan,
                 on_build_construction,
                 on_destroy_construction,
                 on_modify_resource,
@@ -52,6 +51,8 @@ fn main() {
                 ui_on_node_selected_move,
                 ui_on_node_selected_planet,
                 ui_on_construction,
+                ui_topleft,
+                move_hotkeys,
                 button_system,
             )
                 .run_if(in_state(AppState::Gameplay)),
@@ -60,10 +61,13 @@ fn main() {
             Update,
             (interpolation_fx, on_modify_resource_fx).run_if(in_state(AppState::Gameplay)),
         )
+        .add_systems(OnEnter(AppState::GameOver), ui_gameover)
+        .add_systems(OnEnter(AppState::GameWon), ui_win)
         .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
         .insert_resource(AssetHandles::default())
         .insert_resource(Map::test())
         .insert_resource(AutoActions::default())
+        .insert_resource(TurnCount::default())
         .add_event::<EndTurn>()
         .add_event::<BuildConstruction>()
         .add_event::<DestroyConstruction>()
@@ -85,6 +89,8 @@ enum AppState {
     Loading,
     Setup,
     Gameplay,
+    GameOver,
+    GameWon,
 }
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -94,6 +100,7 @@ pub struct AssetHandles {
     font: Handle<Font>,
     song: Handle<AudioSource>,
     ship: Handle<Image>,
+    map: Handle<Image>,
 }
 
 fn startup(
@@ -106,6 +113,7 @@ fn startup(
     handles.font = asset_server.load("FFFFORWA.TTF");
     handles.song = asset_server.load("song.ogg");
     handles.ship = asset_server.load("ship.png");
+    handles.map = asset_server.load("map.png");
 }
 
 fn check_loading(
@@ -124,6 +132,10 @@ fn check_loading(
     );
     loaded &= matches!(
         asset_server.get_load_state(handles.ship.clone()),
+        LoadState::Loaded
+    );
+    loaded &= matches!(
+        asset_server.get_load_state(handles.map.clone()),
         LoadState::Loaded
     );
     if loaded {
@@ -158,7 +170,6 @@ fn gen_atlas(mut texture_atlases: ResMut<Assets<TextureAtlas>>, mut handles: Res
 /// Map
 #[derive(Clone, Debug, Resource)]
 struct Map {
-    nodes: Vec<NodeId>,
     groups: HashMap<GroupId, Vec<NodeId>>,
     edges: Vec<(GroupId, GroupId)>,
     positions: HashMap<NodeId, Vec2>,
@@ -187,55 +198,97 @@ const MAX_STOCKPILE: u32 = 100;
 
 impl Map {
     fn test() -> Self {
-        let nodes: Vec<NodeId> = (0..25).map(|i| NodeId(i)).collect();
+        let mut planets_pos = vec![
+            (GroupId(0), Vec2::new(0., -256.)),
+            (GroupId(1), Vec2::new(-200., 0.)),
+            (GroupId(2), Vec2::new(0., -60.)),
+            (GroupId(3), Vec2::new(160., -40.)),
+            (GroupId(4), Vec2::new(160., 160.)),
+            (GroupId(5), Vec2::new(-160., 240.)),
+            (GroupId(6), Vec2::new(-320., 80.)),
+            (GroupId(7), Vec2::new(-440., -20.)),
+        ];
+        let off = Vec2::new(-32., 16.);
+        for (_, pos) in planets_pos.iter_mut() {
+            *pos = *pos + off;
+        }
+        let w = 64.;
+        let s = 64.;
+        let wh = w / 2.;
+        let node_pos = vec![
+            //
+            planets_pos[0].1 + Vec2::new(-192., 0.),
+            planets_pos[0].1 + Vec2::new(-128., 0.),
+            planets_pos[0].1 + Vec2::new(-64., 0.),
+            planets_pos[0].1 + Vec2::new(0., 0.),
+            planets_pos[0].1 + Vec2::new(64., 0.),
+            //
+            planets_pos[1].1 + Vec2::new(0., -s),
+            planets_pos[1].1 + Vec2::new(0., -s - w),
+            planets_pos[1].1 + Vec2::new(w, -s - w / 2.),
+            //
+            planets_pos[2].1 + Vec2::new(-wh, s),
+            planets_pos[2].1 + Vec2::new(wh, s),
+            planets_pos[2].1 + Vec2::new(wh, s + w),
+            planets_pos[2].1 + Vec2::new(-wh, s + w),
+            //
+            planets_pos[3].1 + Vec2::new(s, wh),
+            planets_pos[3].1 + Vec2::new(s, -wh),
+            planets_pos[3].1 + Vec2::new(s + w, wh),
+            planets_pos[3].1 + Vec2::new(s + w, -wh),
+            //
+            planets_pos[4].1 + Vec2::new(-wh - w, s),
+            planets_pos[4].1 + Vec2::new(-wh, s),
+            planets_pos[4].1 + Vec2::new(wh, s),
+            planets_pos[4].1 + Vec2::new(wh + w, s),
+            planets_pos[4].1 + Vec2::new(-wh - w, s + w),
+            planets_pos[4].1 + Vec2::new(-wh, s + w),
+            planets_pos[4].1 + Vec2::new(wh, s + w),
+            planets_pos[4].1 + Vec2::new(wh + w, s + w),
+            //
+            planets_pos[5].1 + Vec2::new(-wh, -s),
+            planets_pos[5].1 + Vec2::new(wh, -s),
+            //
+            planets_pos[6].1 + Vec2::new(0., s),
+            planets_pos[6].1 + Vec2::new(0., s + w),
+            planets_pos[6].1 + Vec2::new(0., s + w + w),
+            //
+            planets_pos[7].1 + Vec2::new(-w, -s),
+            planets_pos[7].1 + Vec2::new(0., -s),
+            planets_pos[7].1 + Vec2::new(w, -s),
+            planets_pos[7].1 + Vec2::new(-w, -s - w),
+            planets_pos[7].1 + Vec2::new(0., -s - w),
+        ];
+
         let mut map = Self {
-            nodes: nodes.clone(),
             groups: HashMap::from([
                 (GroupId(0), (0..5).map(|i| NodeId(i)).collect()),
-                (GroupId(1), (5..10).map(|i| NodeId(i)).collect()),
-                (GroupId(2), (10..20).map(|i| NodeId(i)).collect()),
-                (GroupId(3), (20..23).map(|i| NodeId(i)).collect()),
-                (GroupId(4), (23..25).map(|i| NodeId(i)).collect()),
+                (GroupId(1), (5..8).map(|i| NodeId(i)).collect()),
+                (GroupId(2), (8..12).map(|i| NodeId(i)).collect()),
+                (GroupId(3), (12..16).map(|i| NodeId(i)).collect()),
+                (GroupId(4), (16..24).map(|i| NodeId(i)).collect()),
+                (GroupId(5), (24..26).map(|i| NodeId(i)).collect()),
+                (GroupId(6), (26..29).map(|i| NodeId(i)).collect()),
+                (GroupId(7), (29..34).map(|i| NodeId(i)).collect()),
             ]),
             edges: vec![
                 (GroupId(0), GroupId(1)),
                 (GroupId(1), GroupId(2)),
-                (GroupId(4), GroupId(0)),
+                (GroupId(1), GroupId(5)),
+                (GroupId(1), GroupId(6)),
+                (GroupId(2), GroupId(3)),
+                (GroupId(3), GroupId(4)),
+                (GroupId(4), GroupId(5)),
+                (GroupId(5), GroupId(6)),
+                (GroupId(6), GroupId(7)),
             ],
-            positions: HashMap::from([
-                (NodeId(0), Vec2::new(0., 0.)),
-                (NodeId(1), Vec2::new(64., 0.)),
-                (NodeId(2), Vec2::new(128., 0.)),
-                (NodeId(3), Vec2::new(-64., 0.)),
-                (NodeId(4), Vec2::new(-128., 0.)),
-                (NodeId(5), Vec2::new(0., 128.)),
-                (NodeId(6), Vec2::new(64., 128.)),
-                (NodeId(7), Vec2::new(128., 128.)),
-                (NodeId(8), Vec2::new(-64., 128.)),
-                (NodeId(9), Vec2::new(-128., 128.)),
-                (NodeId(10), Vec2::new(0., -128.)),
-                (NodeId(11), Vec2::new(64., -128.)),
-                (NodeId(12), Vec2::new(128., -128.)),
-                (NodeId(13), Vec2::new(-64., -128.)),
-                (NodeId(14), Vec2::new(-128., -128.)),
-                (NodeId(15), Vec2::new(0., -192.)),
-                (NodeId(16), Vec2::new(64., -192.)),
-                (NodeId(17), Vec2::new(128., -192.)),
-                (NodeId(18), Vec2::new(-64., -192.)),
-                (NodeId(19), Vec2::new(-128., -192.)),
-                (NodeId(20), Vec2::new(0., -320.)),
-                (NodeId(21), Vec2::new(64., -320.)),
-                (NodeId(22), Vec2::new(128., -320.)),
-                (NodeId(23), Vec2::new(0., 320.)),
-                (NodeId(24), Vec2::new(64., 320.)),
-            ]),
-            group_positions: HashMap::from([
-                (GroupId(0), Vec2::new(-256., 0.)),
-                (GroupId(1), Vec2::new(-256., 128.)),
-                (GroupId(2), Vec2::new(-256., -128.)),
-                (GroupId(3), Vec2::new(-256., -320.)),
-                (GroupId(4), Vec2::new(-256., 320.)),
-            ]),
+            positions: HashMap::from_iter(
+                node_pos
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, pos)| (NodeId(i), pos)),
+            ),
+            group_positions: HashMap::from_iter(planets_pos.into_iter()),
             occupation: HashMap::default(),
         };
         map
@@ -394,8 +447,9 @@ struct ModifyResourceFx {
 enum UiEvent {
     SelectNodeForConstruction(NodeId),
     ConstructOnNode(NodeId),
-    SelectNodeForMove(NodeId),
+    SelectNodeForMove(NodeId, bool),
     SelectPlanet(GroupId),
+    GameOver,
     Close,
 }
 
@@ -697,88 +751,67 @@ impl std::iter::Sum<Self> for Bunch {
 #[derive(Debug, Clone)]
 enum ConstructionVariant {
     SolarField,
-    HydroponicsFarm,
     AtmosphereHarvester,
     ChemicalPlant,
-    BacteriaFarm,
     PlanetFarm,
     AsteroidMine,
     Quarry,
-    FusionGenerator,
-    RocketGenerator,
-    BurnerGenerator,
+    PowerPlant,
 }
 
 impl ConstructionVariant {
     fn get_sprite_index(&self) -> usize {
         match self {
             Self::SolarField => 16,
-            Self::HydroponicsFarm => 17,
-            Self::AtmosphereHarvester => 18,
-            Self::ChemicalPlant => 19,
-            Self::BacteriaFarm => 20,
-            Self::PlanetFarm => 21,
-            Self::AsteroidMine => 22,
-            Self::Quarry => 23,
-            Self::FusionGenerator => 24,
-            Self::RocketGenerator => 25,
-            Self::BurnerGenerator => 26,
+            Self::AtmosphereHarvester => 17,
+            Self::ChemicalPlant => 18,
+            Self::PlanetFarm => 19,
+            Self::AsteroidMine => 20,
+            Self::Quarry => 21,
+            Self::PowerPlant => 22,
         }
     }
 
     fn get_material_cost(&self) -> u32 {
         match self {
-            Self::SolarField => 2,
-            Self::HydroponicsFarm => 2,
+            Self::SolarField => 5,
             Self::AtmosphereHarvester => 20,
             Self::ChemicalPlant => 3,
-            Self::BacteriaFarm => 1,
-            Self::PlanetFarm => 15,
-            Self::AsteroidMine => 4,
-            Self::Quarry => 18,
-            Self::FusionGenerator => 10,
-            Self::RocketGenerator => 1,
-            Self::BurnerGenerator => 2,
+            Self::PlanetFarm => 10,
+            Self::AsteroidMine => 2,
+            Self::Quarry => 5,
+            Self::PowerPlant => 5,
         }
     }
 
     fn request_resources(&self) -> Bunch {
         match self {
             Self::SolarField => Bunch::default(),
-            Self::HydroponicsFarm => Bunch::single(ResourceVariant::Power, 2),
-            Self::AtmosphereHarvester => Bunch::single(ResourceVariant::Power, 4),
-            Self::ChemicalPlant => Bunch::single(ResourceVariant::Material, 1),
-            Self::BacteriaFarm => Bunch::default(),
-            Self::PlanetFarm => Bunch::default(),
+            Self::AtmosphereHarvester => Bunch::single(ResourceVariant::Power, 50),
+            Self::ChemicalPlant => Bunch::single(ResourceVariant::Material, 2),
+            Self::PlanetFarm => Bunch::single(ResourceVariant::Material, 12),
             Self::AsteroidMine => Bunch::single(ResourceVariant::RocketFuel, 2),
-            Self::Quarry => Bunch::single(ResourceVariant::Power, 5),
-            Self::FusionGenerator => Bunch::single(ResourceVariant::FusionFuel, 1),
-            Self::RocketGenerator => Bunch::single(ResourceVariant::RocketFuel, 1),
-            Self::BurnerGenerator => Bunch::single(ResourceVariant::Food, 1),
+            Self::Quarry => Bunch::single(ResourceVariant::Power, 45),
+            Self::PowerPlant => Bunch::single(ResourceVariant::RocketFuel, 2),
         }
     }
 
     fn produce_resources(&self) -> Bunch {
         match self {
             Self::SolarField => Bunch::single(ResourceVariant::Power, 3),
-            Self::HydroponicsFarm => Bunch::single(ResourceVariant::Food, 2),
-            Self::AtmosphereHarvester => Bunch::single(ResourceVariant::FusionFuel, 8),
+            Self::AtmosphereHarvester => Bunch::single(ResourceVariant::FusionFuel, 10),
             Self::ChemicalPlant => Bunch::single(ResourceVariant::RocketFuel, 4),
-            Self::BacteriaFarm => Bunch::single(ResourceVariant::Food, 3),
-            Self::PlanetFarm => Bunch::single(ResourceVariant::Food, 20),
+            Self::PlanetFarm => Bunch::single(ResourceVariant::Food, 10),
             Self::AsteroidMine => Bunch::single(ResourceVariant::Material, 5),
-            Self::Quarry => Bunch::single(ResourceVariant::Material, 60),
-            Self::FusionGenerator => Bunch::single(ResourceVariant::Power, 10),
-            Self::RocketGenerator => Bunch::single(ResourceVariant::Power, 4),
-            Self::BurnerGenerator => Bunch::single(ResourceVariant::Power, 2),
+            Self::Quarry => Bunch::single(ResourceVariant::Material, 30),
+            Self::PowerPlant => Bunch::single(ResourceVariant::Power, 10),
         }
     }
 
     fn get_cooldown(&self) -> u32 {
         match self {
             Self::AtmosphereHarvester => 3,
-            Self::PlanetFarm => 5,
-            Self::AsteroidMine => 2,
+            Self::PlanetFarm => 2,
             Self::Quarry => 3,
             _ => 1,
         }
@@ -787,16 +820,12 @@ impl ConstructionVariant {
     fn iter() -> impl Iterator<Item = Self> {
         [
             Self::SolarField,
-            Self::HydroponicsFarm,
             Self::AtmosphereHarvester,
             Self::ChemicalPlant,
-            Self::BacteriaFarm,
             Self::PlanetFarm,
             Self::AsteroidMine,
             Self::Quarry,
-            Self::FusionGenerator,
-            Self::RocketGenerator,
-            Self::BurnerGenerator,
+            Self::PowerPlant,
         ]
         .iter()
         .cloned()
@@ -807,16 +836,12 @@ impl ToString for ConstructionVariant {
     fn to_string(&self) -> String {
         match &self {
             Self::SolarField => "Solar Field",
-            Self::HydroponicsFarm => "Hydroponics Farm",
             Self::AtmosphereHarvester => "Atmosphere Harvester",
             Self::ChemicalPlant => "Chemical Plant",
-            Self::BacteriaFarm => "Bacteria Farm",
-            Self::PlanetFarm => "Planet Farm",
-            Self::AsteroidMine => "Asteroid Mine",
+            Self::PlanetFarm => "Farm",
+            Self::AsteroidMine => "Asteroid Miner",
             Self::Quarry => "Quarry",
-            Self::FusionGenerator => "Fusion Generator",
-            Self::RocketGenerator => "Rocket Generator",
-            Self::BurnerGenerator => "Burner Generator",
+            Self::PowerPlant => "Power Plant",
         }
         .to_string()
     }
@@ -848,13 +873,8 @@ fn setup_scene(
             continue;
         }
         commands.spawn((
-            SpriteSheetBundle {
-                transform: Transform::default().with_translation(pos.extend(0.0)),
-                sprite: TextureAtlasSprite {
-                    index: 3,
-                    ..Default::default()
-                },
-                texture_atlas: handles.atlas.clone(),
+            Transform {
+                translation: pos.extend(0.0),
                 ..Default::default()
             },
             Planet { id: id.clone() },
@@ -874,6 +894,13 @@ fn setup_scene(
             Node { id: id.clone() },
         ));
     }
+
+    // map
+    commands.spawn(SpriteBundle {
+        texture: handles.map.clone(),
+        transform: Transform::default().with_translation(Vec3::new(0., 0., -0.1)),
+        ..Default::default()
+    });
 
     //ship
     let group_pos = map
@@ -911,16 +938,6 @@ fn setup_scene(
         var: ConstructionVariant::SolarField,
     });
 
-    let occ = NodeOccupant::Construction {
-        var: ConstructionVariant::HydroponicsFarm,
-        cooldown: 0,
-    };
-    map.set_at(&NodeId(1), occ);
-    event_construct.send(BuildConstruction {
-        node_id: NodeId(1),
-        var: ConstructionVariant::HydroponicsFarm,
-    });
-
     if let Ok(actions) = map.add_resource_in_group(&GroupId(0), &ResourceVariant::FusionFuel, 20) {
         for (to, abs, _diff) in actions {
             event_produce.send(ModifyResource {
@@ -941,56 +958,15 @@ fn setup_scene(
         }
     }
 
-    let (var, node_id) = (ConstructionVariant::Quarry, NodeId(10));
-    map.set_at(
-        &node_id,
-        NodeOccupant::Construction {
-            var: var.clone(),
-            cooldown: 0,
-        },
-    );
-    event_construct.send(BuildConstruction { node_id, var });
-    let (var, node_id) = (ConstructionVariant::SolarField, NodeId(11));
-    map.set_at(
-        &node_id,
-        NodeOccupant::Construction {
-            var: var.clone(),
-            cooldown: 0,
-        },
-    );
-    event_construct.send(BuildConstruction { node_id, var });
-    let (var, node_id) = (ConstructionVariant::SolarField, NodeId(12));
-    map.set_at(
-        &node_id,
-        NodeOccupant::Construction {
-            var: var.clone(),
-            cooldown: 0,
-        },
-    );
-    event_construct.send(BuildConstruction { node_id, var });
-
-    let (var, node_id) = (ConstructionVariant::Quarry, NodeId(20));
-    map.set_at(
-        &node_id,
-        NodeOccupant::Construction {
-            var: var.clone(),
-            cooldown: 0,
-        },
-    );
-    event_construct.send(BuildConstruction { node_id, var });
-    let (var, node_id) = (ConstructionVariant::SolarField, NodeId(21));
-    map.set_at(
-        &node_id,
-        NodeOccupant::Construction {
-            var: var.clone(),
-            cooldown: 0,
-        },
-    );
-    event_construct.send(BuildConstruction { node_id, var });
-
-    //if let Ok(events) = map.add_resource_in_group(&GroupId(0), &ResourceVariant::Food, 5) {
-    //   event_produce.send_batch(events);
-    //}
+    if let Ok(actions) = map.add_resource_in_group(&GroupId(0), &ResourceVariant::Food, 20) {
+        for (to, abs, _diff) in actions {
+            event_produce.send(ModifyResource {
+                node_id: to.clone(),
+                var: ResourceVariant::Food,
+                abs,
+            });
+        }
+    }
 
     next_state.set(AppState::Gameplay);
 }
@@ -1002,6 +978,39 @@ fn ship_orbit(mut query_ship: Query<(&mut Transform, &Ship)>, map: Res<Map>, tim
             group_pos.extend(0.),
             Quat::from_rotation_z(0.1 * time.delta_seconds()),
         );
+    }
+}
+
+#[derive(Component)]
+struct UiShipPlanMarker;
+
+fn ship_plan(
+    mut commands: Commands,
+    handles: Res<AssetHandles>,
+    query_m: Query<(Entity, &UiShipPlanMarker)>,
+    query_ship: Query<&Ship>,
+    map: Res<Map>,
+) {
+    for (e, _) in query_m.iter() {
+        commands.entity(e).despawn_recursive();
+    }
+    if let Ok(ship) = query_ship.get_single() {
+        if let Some(plan) = &ship.planned_move {
+            let group_pos = map.group_positions.get(plan).unwrap();
+            commands.spawn((
+                SpriteSheetBundle {
+                    transform: Transform::default().with_translation(group_pos.extend(0.1)),
+                    sprite: TextureAtlasSprite {
+                        color: Color::RED,
+                        index: 5,
+                        ..Default::default()
+                    },
+                    texture_atlas: handles.atlas.clone(),
+                    ..Default::default()
+                },
+                UiShipPlanMarker,
+            ));
+        }
     }
 }
 
@@ -1056,16 +1065,30 @@ enum AutoAction {
     },
 }
 
+#[derive(Resource, Debug, Clone)]
+struct TurnCount {
+    count: u32,
+}
+
+impl Default for TurnCount {
+    fn default() -> Self {
+        Self { count: 1 }
+    }
+}
+
 fn turn(
     mut events: EventReader<EndTurn>,
     mut map: ResMut<Map>,
     mut autoactions: ResMut<AutoActions>,
     mut ship_q: Query<&mut Ship>,
+    mut turns: ResMut<TurnCount>,
+    mut next_state: ResMut<NextState<AppState>>,
 ) {
     if !autoactions.done() {
         return;
     }
     for _ in events.iter() {
+        turns.count += 1;
         for (_id, occ) in map.occupation.iter_mut() {
             match occ {
                 NodeOccupant::Construction { cooldown, .. } if *cooldown > 0 => {
@@ -1154,14 +1177,39 @@ fn turn(
         }
         // todo:decay
 
+        let food = *map
+            .get_group_bunch(&GroupId(0))
+            .res
+            .get(&ResourceVariant::Food)
+            .unwrap_or(&0);
+        let fusion = *map
+            .get_group_bunch(&GroupId(0))
+            .res
+            .get(&ResourceVariant::FusionFuel)
+            .unwrap_or(&0);
+
+        // eat
+        if food > 0 {
+            let lowest_id = map.get_lowest_stockpile(&GroupId(0), &ResourceVariant::Food);
+            let Some(NodeOccupant::Stockpile { amt, .. }) = map.occupation.get_mut(&lowest_id)
+            else {
+                return;
+            };
+            *amt -= 1;
+            autoactions.actions.push(AutoAction::ConsumeResource {
+                from: lowest_id.clone(),
+                to: lowest_id.clone(),
+                var: ResourceVariant::Food,
+                abs: *amt,
+                diff: -1,
+            });
+        } else {
+            next_state.set(AppState::GameOver);
+        }
+
         if let Ok(mut ship) = ship_q.get_single_mut() {
             if let Some(plan) = ship.planned_move.clone() {
-                let fusion = *map
-                    .get_group_bunch(&GroupId(0))
-                    .res
-                    .get(&ResourceVariant::FusionFuel)
-                    .unwrap_or(&0);
-                if fusion > 0 {
+                if fusion > 0 && plan != ship.orbiting_group {
                     let lowest_id =
                         map.get_lowest_stockpile(&GroupId(0), &ResourceVariant::FusionFuel);
                     let Some(NodeOccupant::Stockpile { amt, .. }) =
@@ -1194,8 +1242,19 @@ fn turn(
             ship.planned_move = None;
         }
 
+        // win
+        if fusion > 100 && food > 100 {
+            next_state.set(AppState::GameWon);
+        }
+
         // hack to just start the anim
         autoactions.timer.tick(Duration::from_secs(1));
+
+        if autoactions.actions.len() > 16 {
+            autoactions.timer.set_duration(Duration::from_millis(100));
+        } else {
+            autoactions.timer.set_duration(Duration::from_millis(300));
+        }
     }
 }
 
@@ -1253,6 +1312,9 @@ fn play_autoactions(
             return;
         }
         let act = autoactions.actions.remove(0);
+
+        let duration = Duration::from_millis(300 as u64);
+
         // spawn fx at start of action
         match &act {
             AutoAction::ConsumeResource {
@@ -1305,7 +1367,7 @@ fn play_autoactions(
                             from: from,
                             to: to,
                             mid: None,
-                            timer: Timer::new(Duration::from_millis(300), TimerMode::Once),
+                            timer: Timer::new(duration, TimerMode::Once),
                         },
                     ));
                 }
@@ -1335,12 +1397,44 @@ fn highlight(
     mouse_button_input: Res<Input<MouseButton>>,
     query_moving_to: Query<&MovingTo>,
     query_ship_moving_to: Query<&ShipMovingTo>,
+    query_move_ship: Query<(Entity, &UiSelectedMoveShip)>,
     mut map: ResMut<Map>,
-    mut ship: Query<&mut Ship>,
+    mut ship_q: Query<&mut Ship>,
     mut autoactions: ResMut<AutoActions>,
 ) {
+    for (e, _) in query_move_ship.iter() {
+        commands.entity(e).despawn_recursive();
+    }
     for (e, _) in query_highlight.iter() {
         commands.entity(e).despawn();
+    }
+
+    let Ok(ship) = ship_q.get_single() else {
+        return;
+    };
+
+    let star = map.star(&ship.orbiting_group);
+    let mut nears = vec![];
+    nears.push(ship.orbiting_group.clone());
+    for neighbor_group_id in star.iter() {
+        if neighbor_group_id == &GroupId(0) {
+            // that's a ship not a planet
+            continue;
+        }
+        nears.push(neighbor_group_id.clone());
+        let pos = map.group_positions.get(neighbor_group_id).unwrap();
+        commands.spawn((
+            SpriteSheetBundle {
+                transform: Transform::default().with_translation(pos.extend(0.)),
+                sprite: TextureAtlasSprite {
+                    index: 5,
+                    ..Default::default()
+                },
+                texture_atlas: handles.atlas.clone(),
+                ..Default::default()
+            },
+            UiSelectedMoveShip,
+        ));
     }
 
     let clicked = mouse_button_input.just_pressed(MouseButton::Left);
@@ -1382,36 +1476,113 @@ fn highlight(
             Highlight,
         ));
         if clicked {
-            if let Ok(MovingTo(from_id, nears)) = query_moving_to.get_single() {
-                if nears.contains(&node.id) && map.occupation.get(&node.id).is_none() {
-                    let Some(NodeOccupant::Stockpile { var, amt }) = map.occupation.remove(from_id)
+            if let Ok(MovingTo(from_id, nears, split)) = query_moving_to.get_single() {
+                if nears.contains(&node.id) && node.id != *from_id {
+                    let Some(NodeOccupant::Stockpile {
+                        var: from_var,
+                        amt: from_amt_full,
+                    }) = map.occupation.get(from_id).map(|o| o.clone())
                     else {
                         return;
                     };
-                    map.occupation.insert(
-                        node.id.clone(),
-                        NodeOccupant::Stockpile {
-                            var: var.clone(),
-                            amt,
-                        },
-                    );
-                    autoactions.actions.push(AutoAction::ConsumeResource {
-                        from: from_id.clone(),
-                        to: node.id.clone(),
-                        var: var.clone(),
-                        abs: 0,
-                        diff: amt as i32,
-                    });
-                    autoactions.actions.push(AutoAction::ProduceResource {
-                        from: node.id.clone(),
-                        to: node.id.clone(),
-                        var: var.clone(),
-                        abs: amt,
-                        diff: amt as i32,
-                    });
-                    autoactions.timer.tick(Duration::from_secs(1));
-                    event_ui.send(UiEvent::Close);
-                    return;
+
+                    let from_amt = if *split {
+                        from_amt_full / 2
+                    } else {
+                        from_amt_full
+                    };
+
+                    if let Some(NodeOccupant::Stockpile {
+                        var: to_var,
+                        amt: to_amt,
+                    }) = map.occupation.get(&node.id)
+                    {
+                        if *to_var == from_var {
+                            let clamped = (from_amt + to_amt).min(100);
+                            if from_amt == from_amt_full {
+                                map.occupation.remove(from_id);
+                                autoactions.actions.push(AutoAction::ConsumeResource {
+                                    from: from_id.clone(),
+                                    to: node.id.clone(),
+                                    var: from_var.clone(),
+                                    abs: 0,
+                                    diff: from_amt as i32,
+                                });
+                            } else {
+                                map.occupation.insert(
+                                    from_id.clone(),
+                                    NodeOccupant::Stockpile {
+                                        var: from_var.clone(),
+                                        amt: from_amt_full - from_amt,
+                                    },
+                                );
+                                autoactions.actions.push(AutoAction::ConsumeResource {
+                                    from: from_id.clone(),
+                                    to: node.id.clone(),
+                                    var: from_var.clone(),
+                                    abs: from_amt_full - from_amt,
+                                    diff: from_amt as i32,
+                                });
+                            }
+                            map.occupation.insert(
+                                node.id.clone(),
+                                NodeOccupant::Stockpile {
+                                    var: from_var.clone(),
+                                    amt: clamped,
+                                },
+                            );
+                            autoactions.actions.push(AutoAction::ProduceResource {
+                                from: node.id.clone(),
+                                to: node.id.clone(),
+                                var: from_var.clone(),
+                                abs: clamped,
+                                diff: from_amt as i32,
+                            });
+                        }
+                    } else if map.occupation.get(&node.id).is_none() {
+                        if from_amt == from_amt_full {
+                            map.occupation.remove(from_id);
+                            autoactions.actions.push(AutoAction::ConsumeResource {
+                                from: from_id.clone(),
+                                to: node.id.clone(),
+                                var: from_var.clone(),
+                                abs: 0,
+                                diff: from_amt as i32,
+                            });
+                        } else {
+                            map.occupation.insert(
+                                from_id.clone(),
+                                NodeOccupant::Stockpile {
+                                    var: from_var.clone(),
+                                    amt: from_amt_full - from_amt,
+                                },
+                            );
+                            autoactions.actions.push(AutoAction::ConsumeResource {
+                                from: from_id.clone(),
+                                to: node.id.clone(),
+                                var: from_var.clone(),
+                                abs: from_amt_full - from_amt,
+                                diff: from_amt as i32,
+                            });
+                        }
+                        map.occupation.insert(
+                            node.id.clone(),
+                            NodeOccupant::Stockpile {
+                                var: from_var.clone(),
+                                amt: from_amt,
+                            },
+                        );
+                        autoactions.actions.push(AutoAction::ProduceResource {
+                            from: node.id.clone(),
+                            to: node.id.clone(),
+                            var: from_var.clone(),
+                            abs: from_amt,
+                            diff: from_amt as i32,
+                        });
+                        autoactions.timer.tick(Duration::from_secs(1));
+                        event_ui.send(UiEvent::Close);
+                        return;
+                    }
                 }
             }
             event_ui.send(UiEvent::SelectNodeForConstruction(node.id.clone()));
@@ -1446,20 +1617,16 @@ fn highlight(
             Highlight,
         ));
         if clicked {
-            if let Ok(ShipMovingTo(from_id, nears)) = query_ship_moving_to.get_single() {
-                let fusion = *map
-                    .get_group_bunch(&GroupId(0))
-                    .res
-                    .get(&ResourceVariant::FusionFuel)
-                    .unwrap_or(&0);
-                if fusion > 0 {
-                    if let Ok(mut ship) = ship.get_single_mut() {
-                        ship.planned_move = Some(planet.id.clone());
-                    }
+            let fusion = *map
+                .get_group_bunch(&GroupId(0))
+                .res
+                .get(&ResourceVariant::FusionFuel)
+                .unwrap_or(&0);
+            if fusion > 0 && nears.contains(&planet.id) {
+                if let Ok(mut ship) = ship_q.get_single_mut() {
+                    ship.planned_move = Some(planet.id.clone());
+                    event_ui.send(UiEvent::Close);
                 }
-                event_ui.send(UiEvent::Close);
-            } else {
-                event_ui.send(UiEvent::SelectPlanet(planet.id.clone()));
             }
         }
     }
@@ -1469,9 +1636,13 @@ fn highlight(
 enum UiButton {
     ConstructMenu(NodeId),
     DestroyMenu(NodeId),
-    MoveMenu(NodeId),
+    MoveMenu(NodeId, bool),
     Construct(NodeId, ConstructionVariant),
+    EndTurn,
 }
+
+#[derive(Component)]
+struct UiSelectedMoveShip;
 
 #[derive(Component)]
 struct UiNodeSelectedPlanet;
@@ -1535,7 +1706,7 @@ fn ui_on_node_selected_planet(
             // that's a ship not a planet
             continue;
         }
-        nears.push(group_id.clone());
+        nears.push(neighbor_group_id.clone());
         let pos = map.group_positions.get(neighbor_group_id).unwrap();
         commands.spawn((
             SpriteSheetBundle {
@@ -1595,11 +1766,29 @@ fn ui_on_node_selected_planet(
         });
 }
 
+fn move_hotkeys(
+    keys: Res<Input<KeyCode>>,
+    q: Query<&UiCanHotkey>,
+    mut event_ui: EventWriter<UiEvent>,
+) {
+    if let Ok(UiCanHotkey(id)) = q.get_single() {
+        if keys.just_pressed(KeyCode::A) {
+            event_ui.send(UiEvent::SelectNodeForMove(id.clone(), false));
+        }
+        if keys.just_pressed(KeyCode::S) {
+            event_ui.send(UiEvent::SelectNodeForMove(id.clone(), true));
+        }
+    }
+}
+
 #[derive(Component)]
 struct UiNodeSelectedMove;
 
 #[derive(Component)]
-struct MovingTo(NodeId, Vec<NodeId>);
+struct UiCanHotkey(NodeId);
+
+#[derive(Component)]
+struct MovingTo(NodeId, Vec<NodeId>, bool);
 
 fn ui_on_node_selected_move(
     mut commands: Commands,
@@ -1626,8 +1815,8 @@ fn ui_on_node_selected_move(
 
     let event = event_ui
         .iter()
-        .find(|e| matches!(e, UiEvent::SelectNodeForMove(_)));
-    let Some(UiEvent::SelectNodeForMove(id)) = event else {
+        .find(|e| matches!(e, UiEvent::SelectNodeForMove(_, _)));
+    let Some(UiEvent::SelectNodeForMove(id, split)) = event else {
         return;
     };
 
@@ -1642,10 +1831,22 @@ fn ui_on_node_selected_move(
         color: Color::WHITE,
     };
 
-    let group_id = map.group_from_node(id);
-    let star = map.star(&group_id);
-
     let mut nears = vec![];
+
+    let group_id = map.group_from_node(id);
+    let mut star: Vec<GroupId> = map
+        .star(&group_id)
+        .iter()
+        .filter(|neigh_id| {
+            if group_id == GroupId(0) {
+                true
+            } else {
+                neigh_id == &&GroupId(0)
+            }
+        })
+        .cloned()
+        .collect();
+    star.push(group_id.clone());
     for neighbor_group_id in star.iter() {
         for node_id in map.groups.get(neighbor_group_id).unwrap().iter() {
             nears.push(node_id.clone());
@@ -1666,7 +1867,7 @@ fn ui_on_node_selected_move(
         }
     }
 
-    commands.spawn(MovingTo(id.clone(), nears));
+    commands.spawn(MovingTo(id.clone(), nears, *split));
 
     commands
         .spawn((
@@ -1710,12 +1911,16 @@ fn ui_on_node_selected_constr(
     mut event_ui: EventReader<UiEvent>,
     query_ui_sel: Query<(Entity, &UiNodeSelectedConstr)>,
     query_selected: Query<(Entity, &Selected)>,
+    query_hot: Query<(Entity, &UiCanHotkey)>,
     map: Res<Map>,
 ) {
     if event_ui.is_empty() {
         return;
     }
 
+    for (e, _) in query_hot.iter() {
+        commands.entity(e).despawn_recursive();
+    }
     for (e, _) in query_ui_sel.iter() {
         commands.entity(e).despawn_recursive();
     }
@@ -1730,6 +1935,8 @@ fn ui_on_node_selected_constr(
         return;
     };
 
+    commands.spawn(UiCanHotkey(id.clone()));
+
     let big_text_style = TextStyle {
         font: handles.font.clone(),
         font_size: 30.0,
@@ -1742,7 +1949,7 @@ fn ui_on_node_selected_constr(
     };
     let small_text_style = TextStyle {
         font: handles.font.clone(),
-        font_size: 10.0,
+        font_size: 13.0,
         color: Color::WHITE,
     };
 
@@ -1834,7 +2041,24 @@ fn ui_on_node_selected_constr(
                         ),
                     );
                 });
-            } else if matches!(occ, Some(NodeOccupant::Construction { .. })) {
+            } else if let Some(NodeOccupant::Construction { var, cooldown }) = occ {
+                root.spawn(
+                    TextBundle::from_section(format!("{}", var.to_string()), text_style.clone())
+                        .with_style(Style {
+                            position_type: PositionType::Relative,
+                            ..default()
+                        }),
+                );
+                root.spawn(
+                    TextBundle::from_section(
+                        format!("Will produce in {} turns", cooldown),
+                        text_style.clone(),
+                    )
+                    .with_style(Style {
+                        position_type: PositionType::Relative,
+                        ..default()
+                    }),
+                );
                 root.spawn((
                     ButtonBundle {
                         style: Style {
@@ -1860,10 +2084,20 @@ fn ui_on_node_selected_constr(
                     );
                 });
             } else if let Some(NodeOccupant::Stockpile { var, amt }) = occ {
+                root.spawn(
+                    TextBundle::from_section(
+                        format!("Stockpile of {} {}", amt, var.to_string()),
+                        text_style.clone(),
+                    )
+                    .with_style(Style {
+                        position_type: PositionType::Relative,
+                        ..default()
+                    }),
+                );
                 root.spawn((
                     ButtonBundle {
                         style: Style {
-                            flex_direction: FlexDirection::Row,
+                            flex_direction: FlexDirection::Column,
                             border: UiRect::all(Val::Px(3.0)),
                             margin: UiRect::all(Val::Px(2.)),
                             ..Default::default()
@@ -1872,16 +2106,43 @@ fn ui_on_node_selected_constr(
                         border_color: Color::rgb(0.2, 0.2, 0.2).into(),
                         ..Default::default()
                     },
-                    UiButton::MoveMenu(id.clone()),
+                    UiButton::MoveMenu(id.clone(), false),
                 ))
                 .with_children(|button| {
                     button.spawn(
-                        TextBundle::from_section("Move Resources", big_text_style.clone())
-                            .with_style(Style {
+                        TextBundle::from_section("Move All", big_text_style.clone()).with_style(
+                            Style {
                                 position_type: PositionType::Relative,
                                 ..default()
-                            }),
+                            },
+                        ),
                     );
+                    button.spawn(TextBundle::from_section("Hotkey: a", text_style.clone()));
+                });
+                root.spawn((
+                    ButtonBundle {
+                        style: Style {
+                            flex_direction: FlexDirection::Column,
+                            border: UiRect::all(Val::Px(3.0)),
+                            margin: UiRect::all(Val::Px(2.)),
+                            ..Default::default()
+                        },
+                        background_color: Color::rgb(0.14, 0.14, 0.14).into(),
+                        border_color: Color::rgb(0.2, 0.2, 0.2).into(),
+                        ..Default::default()
+                    },
+                    UiButton::MoveMenu(id.clone(), true),
+                ))
+                .with_children(|button| {
+                    button.spawn(
+                        TextBundle::from_section("Move Half", big_text_style.clone()).with_style(
+                            Style {
+                                position_type: PositionType::Relative,
+                                ..default()
+                            },
+                        ),
+                    );
+                    button.spawn(TextBundle::from_section("Hotkey: s", text_style.clone()));
                 });
             }
         });
@@ -1895,6 +2156,7 @@ fn button_system(
     mut event_ui: EventWriter<UiEvent>,
     mut event_construct: EventWriter<BuildConstruction>,
     mut event_destruct: EventWriter<DestroyConstruction>,
+    mut events_end: EventWriter<EndTurn>,
     mut map: ResMut<Map>,
     mut autoactions: ResMut<AutoActions>,
 ) {
@@ -1967,8 +2229,11 @@ fn button_system(
                         });
                         event_ui.send(UiEvent::Close);
                     }
-                    UiButton::MoveMenu(node_id) => {
-                        event_ui.send(UiEvent::SelectNodeForMove(node_id.clone()));
+                    UiButton::MoveMenu(node_id, split) => {
+                        event_ui.send(UiEvent::SelectNodeForMove(node_id.clone(), *split));
+                    }
+                    UiButton::EndTurn => {
+                        events_end.send(EndTurn);
                     }
                 }
             }
@@ -2033,7 +2298,7 @@ fn ui_on_construction(
     };
     let small_text_style = TextStyle {
         font: handles.font.clone(),
-        font_size: 10.0,
+        font_size: 14.0,
         color: Color::WHITE,
     };
     commands
@@ -2091,8 +2356,8 @@ fn ui_on_construction(
                 .with_children(|constr_node| {
                     constr_node.spawn(AtlasImageBundle {
                         style: Style {
-                            width: Val::Px(48.),
-                            height: Val::Px(48.),
+                            width: Val::Px(64.),
+                            height: Val::Px(64.),
                             ..Default::default()
                         },
                         texture_atlas: handles.atlas.clone(),
@@ -2106,6 +2371,7 @@ fn ui_on_construction(
                         .spawn(NodeBundle {
                             style: Style {
                                 flex_direction: FlexDirection::Column,
+                                margin: UiRect::all(Val::Px(2.)),
                                 ..Default::default()
                             },
                             ..Default::default()
@@ -2121,7 +2387,7 @@ fn ui_on_construction(
                             details.spawn(
                                 TextBundle::from_section(
                                     format!(
-                                        "cost: {} {}, you have {} {} in this sector",
+                                        "Costs: {} {}, you have {} {} in this sector",
                                         constr.get_material_cost(),
                                         ResourceVariant::Material.to_string(),
                                         cash,
@@ -2132,7 +2398,7 @@ fn ui_on_construction(
                                     } else {
                                         TextStyle {
                                             font: handles.font.clone(),
-                                            font_size: 10.0,
+                                            font_size: 14.0,
                                             color: Color::RED,
                                         }
                                     },
@@ -2159,7 +2425,7 @@ fn ui_on_construction(
                             details.spawn(
                                 TextBundle::from_section(
                                     format!(
-                                        "generates: {} {} using {} {} every {} turns",
+                                        "Generates: {} {} using {} {} every {} turns",
                                         pamt,
                                         pvar.to_string(),
                                         camt,
@@ -2176,5 +2442,225 @@ fn ui_on_construction(
                         });
                 });
             }
+        });
+}
+
+#[derive(Component)]
+struct UiTurnCount;
+
+fn ui_topleft(turns: Res<TurnCount>, mut query: Query<(&UiTurnCount, &mut Text)>) {
+    if let Ok((_, mut text)) = query.get_single_mut() {
+        text.sections[0].value = format!("Turn {}", turns.count);
+    }
+}
+
+fn setup_ui_topleft(mut commands: Commands, handles: Res<AssetHandles>, turns: Res<TurnCount>) {
+    let big_text_style = TextStyle {
+        font: handles.font.clone(),
+        font_size: 30.0,
+        color: Color::WHITE,
+    };
+    let text_style = TextStyle {
+        font: handles.font.clone(),
+        font_size: 20.0,
+        color: Color::WHITE,
+    };
+    let small_text_style = TextStyle {
+        font: handles.font.clone(),
+        font_size: 13.0,
+        color: Color::WHITE,
+    };
+    commands
+        .spawn((NodeBundle {
+            style: Style {
+                position_type: PositionType::Absolute,
+                top: Val::Percent(0.),
+                left: Val::Percent(0.),
+                width: Val::Percent(15.),
+                border: UiRect::all(Val::Px(5.0)),
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            background_color: Color::rgb(0.1, 0.1, 0.1).into(),
+            border_color: Color::WHITE.into(),
+            ..default()
+        },))
+        .with_children(|root| {
+            root.spawn((
+                ButtonBundle {
+                    style: Style {
+                        flex_direction: FlexDirection::Column,
+                        margin: UiRect::all(Val::Px(2.)),
+                        ..Default::default()
+                    },
+                    background_color: Color::rgb(0.14, 0.14, 0.14).into(),
+                    ..Default::default()
+                },
+                UiButton::EndTurn,
+            ))
+            .with_children(|details| {
+                details.spawn(
+                    TextBundle::from_section("End Turn", big_text_style.clone()).with_style(
+                        Style {
+                            position_type: PositionType::Relative,
+                            ..default()
+                        },
+                    ),
+                );
+                details.spawn((
+                    TextBundle::from_section(format!("Turn {}", turns.count), text_style.clone())
+                        .with_style(Style {
+                            position_type: PositionType::Relative,
+                            ..default()
+                        }),
+                    UiTurnCount,
+                ));
+                details.spawn(TextBundle::from_section(
+                    "Hotkey: Delete",
+                    text_style.clone(),
+                ));
+                details.spawn(
+                    TextBundle::from_section(
+                        "Each turn you eat 1 Food from the ship inventory.",
+                        small_text_style.clone(),
+                    )
+                    .with_style(Style {
+                        position_type: PositionType::Relative,
+                        margin: UiRect::all(Val::Px(10.)),
+                        ..default()
+                    }),
+                );
+                details.spawn(
+                    TextBundle::from_section(
+                        "With 100 Fusion Fuel and 100 Food in the ship you will be able to leave\
+                        this system.",
+                        small_text_style.clone(),
+                    )
+                    .with_style(Style {
+                        position_type: PositionType::Relative,
+                        margin: UiRect::all(Val::Px(10.)),
+                        ..default()
+                    }),
+                );
+            });
+        });
+}
+
+#[derive(Component)]
+struct UiGameOver;
+
+fn gameover_reset(mut next_state: ResMut<NextState<AppState>>, keys: Res<Input<KeyCode>>) {
+    if keys.just_pressed(KeyCode::Space) {
+        next_state.set(AppState::Gameplay);
+    }
+}
+
+fn ui_win(
+    mut commands: Commands,
+    handles: Res<AssetHandles>,
+    query_ui: Query<(Entity, &UiGameOver)>,
+) {
+    for (e, _) in query_ui.iter() {
+        commands.entity(e).despawn_recursive();
+    }
+    let big_text_style = TextStyle {
+        font: handles.font.clone(),
+        font_size: 30.0,
+        color: Color::WHITE,
+    };
+    let text_style = TextStyle {
+        font: handles.font.clone(),
+        font_size: 20.0,
+        color: Color::WHITE,
+    };
+    let small_text_style = TextStyle {
+        font: handles.font.clone(),
+        font_size: 10.0,
+        color: Color::WHITE,
+    };
+    commands
+        .spawn((NodeBundle {
+            style: Style {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.),
+                height: Val::Percent(100.),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                border: UiRect::all(Val::Px(5.0)),
+                ..default()
+            },
+            background_color: Color::rgba(0.0, 0.0, 0.0, 0.5).into(),
+            border_color: Color::GREEN.into(),
+            ..default()
+        },))
+        .with_children(|root| {
+            root.spawn(
+                TextBundle::from_section(
+                    "You have enough fusion fuel and food to continue your journey! Godspeed!",
+                    big_text_style.clone(),
+                )
+                .with_style(Style {
+                    position_type: PositionType::Relative,
+                    ..default()
+                }),
+            );
+        });
+}
+
+fn ui_gameover(
+    mut commands: Commands,
+    handles: Res<AssetHandles>,
+    query_ui: Query<(Entity, &UiGameOver)>,
+) {
+    for (e, _) in query_ui.iter() {
+        commands.entity(e).despawn_recursive();
+    }
+    let big_text_style = TextStyle {
+        font: handles.font.clone(),
+        font_size: 30.0,
+        color: Color::WHITE,
+    };
+    let text_style = TextStyle {
+        font: handles.font.clone(),
+        font_size: 20.0,
+        color: Color::WHITE,
+    };
+    let small_text_style = TextStyle {
+        font: handles.font.clone(),
+        font_size: 10.0,
+        color: Color::WHITE,
+    };
+    commands
+        .spawn((NodeBundle {
+            style: Style {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.),
+                height: Val::Percent(100.),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                border: UiRect::all(Val::Px(5.0)),
+                ..default()
+            },
+            background_color: Color::rgba(0.0, 0.0, 0.0, 0.5).into(),
+            border_color: Color::RED.into(),
+            ..default()
+        },))
+        .with_children(|root| {
+            root.spawn(
+                TextBundle::from_section("You lose! You ran out of food.", big_text_style.clone())
+                    .with_style(Style {
+                        position_type: PositionType::Relative,
+                        ..default()
+                    }),
+            );
+            root.spawn(
+                TextBundle::from_section("Reload the page to retry :)", text_style.clone())
+                    .with_style(Style {
+                        position_type: PositionType::Relative,
+                        ..default()
+                    }),
+            );
         });
 }
